@@ -1,100 +1,114 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IonPlus Dashboard</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IonPlus Dashboard</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body class="dashboard-body">
 
 <header class="topbar">
-    <span class="brand">IonPlus</span>
-    <span class="signed-in">
-        Signed in as <strong>{{ username }}</strong>
-        · <a href="/logout" class="logout-link">Sign out</a>
-    </span>
+  <span class="brand">IonPlus</span>
+  <span class="signed-in" id="signedInText">...</span>
 </header>
 
 <main class="dashboard-main">
-    <div class="card">
-        <h1>Announcement Emails</h1>
-        <p>Add an email to get notified when new Ion announcements are posted.</p>
+  <div class="card">
+    <h1>Announcement Emails</h1>
+    <p>Add an email to get notified when new Ion announcements are posted.</p>
 
-        <form id="subscribeForm">
-            <input type="email" id="email" name="email" placeholder="Enter your email" required>
-            <button type="submit" class="ion-btn">Add Email</button>
-        </form>
-        <div id="message"></div>
+    <form id="subscribeForm">
+      <input type="email" id="emailInput" placeholder="Enter your email" required>
+      <button type="submit" class="ion-btn">Add Email</button>
+    </form>
+    <div id="messageBox"></div>
 
-        <h2 class="subscribed-heading">Your subscribed emails</h2>
-        <ul id="emailList" class="email-list">
-            {% for email in emails %}
-            <li data-email="{{ email }}">
-                <span>{{ email }}</span>
-                <button class="remove-btn" onclick="removeEmail('{{ email }}')">Remove</button>
-            </li>
-            {% else %}
-            <li class="empty-state">No emails added yet.</li>
-            {% endfor %}
-        </ul>
-    </div>
+    <h2 class="subscribed-heading">Your subscribed emails</h2>
+    <ul id="emailList" class="email-list"></ul>
+  </div>
 </main>
 
 <script>
-    const form = document.getElementById('subscribeForm');
-    const messageDiv = document.getElementById('message');
-    const emailList = document.getElementById('emailList');
+const apiBase = "https://rakazen.pythonanywhere.com";
 
-    function renderEmails(emails) {
-        emailList.innerHTML = '';
-        if (emails.length === 0) {
-            emailList.innerHTML = '<li class="empty-state">No emails added yet.</li>';
-            return;
-        }
-        emails.forEach(email => {
-            const li = document.createElement('li');
-            li.dataset.email = email;
-            li.innerHTML = `<span>${email}</span><button class="remove-btn" onclick="removeEmail('${email}')">Remove</button>`;
-            emailList.appendChild(li);
-        });
-    }
+const urlParams = new URLSearchParams(window.location.search);
+const urlToken = urlParams.get("token");
+if (urlToken) {
+  localStorage.setItem("ionplusToken", urlToken);
+  window.history.replaceState({}, "", "/dashboard.html");
+}
 
-    form.addEventListener('submit', async function (e) {
-        e.preventDefault();
-        const email = document.getElementById('email').value;
+const siteToken = localStorage.getItem("ionplusToken");
+if (!siteToken) {
+  location.href = "index.html";
+}
 
-        const response = await fetch('/api/subscribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ email })
-        });
-        const data = await response.json();
+function authHeaders() {
+  return { "Authorization": "Bearer " + siteToken, "Content-Type": "application/json" };
+}
 
-        if (response.ok) {
-            messageDiv.className = 'success';
-            messageDiv.textContent = data.message;
-            document.getElementById('email').value = '';
-            renderEmails(data.emails);
-        } else {
-            messageDiv.className = 'error';
-            messageDiv.textContent = data.error || 'Something went wrong.';
-        }
-    });
+function renderEmails(emails) {
+  const list = document.getElementById("emailList");
+  list.innerHTML = "";
+  if (emails.length === 0) {
+    list.innerHTML = '<li class="empty-state">No emails added yet.</li>';
+    return;
+  }
+  emails.forEach(email => {
+    const li = document.createElement("li");
+    li.innerHTML = `<span>${email}</span><button class="remove-btn">Remove</button>`;
+    li.querySelector(".remove-btn").addEventListener("click", () => removeEmail(email));
+    list.appendChild(li);
+  });
+}
 
-    async function removeEmail(email) {
-        const response = await fetch('/api/unsubscribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ email })
-        });
-        const data = await response.json();
-        if (response.ok) {
-            renderEmails(data.emails);
-        }
-    }
+async function loadMe() {
+  const res = await fetch(apiBase + "/api/me", { headers: authHeaders() });
+  if (!res.ok) {
+    localStorage.removeItem("ionplusToken");
+    location.href = "index.html";
+    return;
+  }
+  const data = await res.json();
+  document.getElementById("signedInText").innerHTML =
+    `Signed in as <strong>${data.username}</strong>`;
+}
+
+document.getElementById("subscribeForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = document.getElementById("emailInput").value;
+  const messageBox = document.getElementById("messageBox");
+
+  const res = await fetch(apiBase + "/api/subscribe", {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ email })
+  });
+  const data = await res.json();
+
+  if (res.ok) {
+    messageBox.className = "success";
+    messageBox.textContent = "Added.";
+    document.getElementById("emailInput").value = "";
+    renderEmails(data.emails);
+  } else {
+    messageBox.className = "error";
+    messageBox.textContent = data.error || "something went wrong";
+  }
+});
+
+async function removeEmail(email) {
+  const res = await fetch(apiBase + "/api/unsubscribe", {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ email })
+  });
+  const data = await res.json();
+  if (res.ok) renderEmails(data.emails);
+}
+
+loadMe();
 </script>
 
 </body>
