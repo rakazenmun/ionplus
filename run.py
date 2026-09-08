@@ -1,60 +1,78 @@
 import os
 import json
+import time
+import secrets
 import smtplib
 from email.message import EmailMessage
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, redirect, session, render_template, url_for
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 load_dotenv()
 
-SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
+senderEmail = os.getenv("SENDER_EMAIL")
+senderPassword = os.getenv("SENDER_PASSWORD")
 
-ION_CLIENT_ID = os.getenv("ION_CLIENT_ID")
-ION_CLIENT_SECRET = os.getenv("ION_CLIENT_SECRET")
-ION_REDIRECT_URI = os.getenv("ION_REDIRECT_URI")  # e.g. https://ionplus.wnbase.com/callback
+ionClientId = os.getenv("ION_CLIENT_ID")
+ionClientSecret = os.getenv("ION_CLIENT_SECRET")
+ionRedirectUri = os.getenv("ION_REDIRECT_URI")
 
-ION_AUTHORIZE_URL = "https://ion.tjhsst.edu/oauth/authorize/"
-ION_TOKEN_URL = "https://ion.tjhsst.edu/oauth/token/"
-ION_PROFILE_URL = "https://ion.tjhsst.edu/api/profile"
+authUrl = "https://ion.tjhsst.edu/oauth/authorize/"
+tokenUrl = "https://ion.tjhsst.edu/oauth/token/"
+profileUrl = "https://ion.tjhsst.edu/api/profile"
 
-SUBSCRIBERS_FILE = "subscribers.json"  # { "ion_username": ["email1", "email2"] }
+subsFile = "subscribers.json"
+tokensFile = "tokens.json"
+
+tokenLifetime = 60 * 60 * 24 * 7
 
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY")  # required for session cookies
-CORS(app, supports_credentials=True)
+CORS(app)
 
 
-# subscribers
-
-def load_subscribers():
-    if not os.path.exists(SUBSCRIBERS_FILE):
+def loadJson(path):
+    if not os.path.exists(path):
         return {}
-    with open(SUBSCRIBERS_FILE, "r") as f:
+    with open(path) as f:
         return json.load(f)
 
 
-def save_subscribers(data):
-    with open(SUBSCRIBERS_FILE, "w") as f:
+def saveJson(path, data):
+    with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
 
-def all_subscribed_emails():
-    """Flat list of every email across every user, for the announcement pipeline."""
-    data = load_subscribers()
-    emails = set()
-    for email_list in data.values():
-        emails.update(email_list)
-    return list(emails)
+def usernameFromToken(token):
+    tokens = loadJson(tokensFile)
+    entry = tokens.get(token)
+    if not entry:
+        return None
+    if time.time() - entry["created"] > tokenLifetime:
+        del tokens[token]
+        saveJson(tokensFile, tokens)
+        return None
+    return entry["username"]
 
 
-# announcements
+def getTokenFromRequest():
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[7:]
+    return None
 
-def run_pipeline():
-    print("[Pipeline] Running pipeline check...")
+
+def allEmails():
+    subs = loadJson(subsFile)
+    out = set()
+    for lst in subs.values():
+        out.update(lst)
+    return list(out)
+
+
+def runPipeline():
+    print("checking for new announcements...")
 
     if not os.path.exists("input.json"):
         with open("input.json", "w") as f:
@@ -64,178 +82,146 @@ def run_pipeline():
     os.system("solution.exe")
 
     if not os.path.exists("output.txt"):
-        print("[Pipeline] Error: output.txt was not generated.")
+        print("no output.txt, something broke in solution.cpp?")
         return
 
-    with open("output.txt", "r", encoding="utf-8") as f:
-        raw_content = f.read().strip()
+    with open("output.txt", encoding="utf-8") as f:
+        raw = f.read().strip()
 
-    if raw_content != "NONE" and "|" in raw_content:
-        title, author, body = raw_content.split("|", 2)
+    if raw == "NONE" or "|" not in raw:
+        print("nothing new")
+        return
 
-        recipients = all_subscribed_emails()
-        if not recipients and SENDER_EMAIL:
-            recipients = [SENDER_EMAIL]
+    title, author, body = raw.split("|", 2)
+    recipients = allEmails()
+    if not recipients and senderEmail:
+        recipients = [senderEmail]
 
-        msg = EmailMessage()
-        msg['Subject'] = f"Ion Announcement: {author}"
-        msg['From'] = SENDER_EMAIL
-        msg['To'] = SENDER_EMAIL
+    msg = EmailMessage()
+    msg["Subject"] = f"Ion Announcement: {author}"
+    msg["From"] = senderEmail
+    msg["To"] = senderEmail
 
-        html_content = f"""
-        <html>
-            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-                    <h2 style="color: #003057;">{title}</h2>
-                    <p style="font-size: 14px; color: #666;"><strong>Author:</strong> {author}</p>
-                    <hr style="border: 0; border-top: 1px solid #ccc;">
-                    <p style="font-size: 16px;">{body}</p>
-                </div>
-            </body>
-        </html>
-        """
+    html = f"""
+    <html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+      <div style="max-width:600px;margin:0 auto;padding:20px;border:1px solid #e0e0e0;border-radius:8px;">
+        <h2 style="color:#003057;">{title}</h2>
+        <p style="font-size:14px;color:#666;"><strong>Author:</strong> {author}</p>
+        <hr style="border:0;border-top:1px solid #ccc;">
+        <p style="font-size:16px;">{body}</p>
+      </div>
+    </body></html>
+    """
+    msg.set_content(f"{author}: {title}\n\n{body}")
+    msg.add_alternative(html, subtype="html")
 
-        msg.set_content(f"Announcement from {author}:\n\nTitle: {title}\n\n{body}")
-        msg.add_alternative(html_content, subtype='html')
-
-        print(f"[Pipeline] Dispatching email to {len(recipients)} recipient(s)...")
-        try:
-            with smtplib.SMTP_SSL("smtp.zoho.com", 465) as server:
-                server.login(SENDER_EMAIL, SENDER_PASSWORD)
-                server.send_message(msg, to_addrs=recipients)
-            print("[Pipeline] Email dispatched successfully.")
-        except Exception as e:
-            print(f"[Pipeline] Failed to send email: {e}")
-    else:
-        print("[Pipeline] No new announcements detected.")
+    try:
+        with smtplib.SMTP_SSL("smtp.zoho.com", 465) as server:
+            server.login(senderEmail, senderPassword)
+            server.send_message(msg, to_addrs=recipients)
+        print(f"sent to {len(recipients)} people")
+    except Exception as e:
+        print("email send failed:", e)
 
 
-# ion oauth
-
-@app.route('/login')
+@app.route("/login")
 def login():
     params = {
         "response_type": "code",
-        "client_id": ION_CLIENT_ID,
-        "redirect_uri": ION_REDIRECT_URI,
+        "client_id": ionClientId,
+        "redirect_uri": ionRedirectUri,
         "scope": "read",
     }
-    query = "&".join(f"{k}={requests.utils.quote(str(v))}" for k, v in params.items())
-    return redirect(f"{ION_AUTHORIZE_URL}?{query}")
+    qs = "&".join(f"{k}={requests.utils.quote(str(v))}" for k, v in params.items())
+    return f'<a href="{authUrl}?{qs}">continue to ion</a>', 200, {"Content-Type": "text/html"}
 
 
-@app.route('/callback')
+@app.route("/callback")
 def callback():
     code = request.args.get("code")
     if not code:
-        return "Missing authorization code from Ion.", 400
+        return "no code from ion", 400
 
-    token_response = requests.post(ION_TOKEN_URL, data={
+    tokenRes = requests.post(tokenUrl, data={
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": ION_REDIRECT_URI,
-        "client_id": ION_CLIENT_ID,
-        "client_secret": ION_CLIENT_SECRET,
+        "redirect_uri": ionRedirectUri,
+        "client_id": ionClientId,
+        "client_secret": ionClientSecret,
     })
+    if tokenRes.status_code != 200:
+        return f"token exchange failed: {tokenRes.text}", 400
 
-    if token_response.status_code != 200:
-        return f"Failed to exchange code for token: {token_response.text}", 400
+    accessToken = tokenRes.json()["access_token"]
 
-    token_data = token_response.json()
-    access_token = token_data["access_token"]
+    profileRes = requests.get(profileUrl, headers={"Authorization": f"Bearer {accessToken}"})
+    if profileRes.status_code != 200:
+        return f"couldn't get profile: {profileRes.text}", 400
 
-    profile_response = requests.get(
-        ION_PROFILE_URL,
-        headers={"Authorization": f"Bearer {access_token}"}
-    )
-    if profile_response.status_code != 200:
-        return f"Failed to fetch Ion profile: {profile_response.text}", 400
-
-    profile = profile_response.json()
-    ion_username = profile.get("ion_username")
-    if not ion_username:
-        return "Ion profile did not return a username.", 400
-
-    # keep username
-    session["ion_username"] = ion_username
-
-    return redirect(url_for("dashboard"))
-
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for("index"))
-
-
-def current_user():
-    return session.get("ion_username")
-
-
-# pages
-
-@app.route('/')
-def index():
-    return render_template("index.html")
-
-
-@app.route('/dashboard')
-def dashboard():
-    username = current_user()
+    username = profileRes.json().get("ion_username")
     if not username:
-        return redirect(url_for("login"))
+        return "no ion_username in profile response", 400
 
-    data = load_subscribers()
-    my_emails = data.get(username, [])
-    return render_template("dashboard.html", username=username, emails=my_emails)
+    siteToken = secrets.token_urlsafe(32)
+    tokens = loadJson(tokensFile)
+    tokens[siteToken] = {"username": username, "created": time.time()}
+    saveJson(tokensFile, tokens)
+
+    return f'<script>location.href = "https://ionplus.wnbase.com/dashboard.html?token={siteToken}";</script>'
 
 
-# subscription API
+@app.route("/api/me")
+def me():
+    username = usernameFromToken(getTokenFromRequest())
+    if not username:
+        return jsonify({"error": "not signed in"}), 401
+    return jsonify({"username": username})
 
-@app.route('/api/subscribe', methods=['POST'])
+
+@app.route("/api/subscribe", methods=["POST"])
 def subscribe():
-    username = current_user()
+    username = usernameFromToken(getTokenFromRequest())
     if not username:
-        return jsonify({"error": "Not signed in with Ion."}), 401
+        return jsonify({"error": "not signed in"}), 401
 
-    email = request.form.get('email') or (request.json and request.json.get('email'))
+    email = request.json.get("email") if request.json else None
     if not email:
-        return jsonify({"error": "Invalid email address"}), 400
+        return jsonify({"error": "no email given"}), 400
 
-    data = load_subscribers()
-    emails = data.setdefault(username, [])
+    subs = loadJson(subsFile)
+    emails = subs.setdefault(username, [])
     if email not in emails:
         emails.append(email)
-        save_subscribers(data)
+        saveJson(subsFile, subs)
 
-    return jsonify({"message": "Subscribed successfully!", "emails": emails}), 200
+    return jsonify({"emails": emails})
 
 
-@app.route('/api/unsubscribe', methods=['POST'])
+@app.route("/api/unsubscribe", methods=["POST"])
 def unsubscribe():
-    username = current_user()
+    username = usernameFromToken(getTokenFromRequest())
     if not username:
-        return jsonify({"error": "Not signed in with Ion."}), 401
+        return jsonify({"error": "not signed in"}), 401
 
-    email = request.form.get('email') or (request.json and request.json.get('email'))
+    email = request.json.get("email") if request.json else None
     if not email:
-        return jsonify({"error": "Invalid email address"}), 400
+        return jsonify({"error": "no email given"}), 400
 
-    data = load_subscribers()
-    emails = data.get(username, [])
+    subs = loadJson(subsFile)
+    emails = subs.get(username, [])
     if email in emails:
         emails.remove(email)
-        save_subscribers(data)
+        saveJson(subsFile, subs)
 
-    return jsonify({"message": "Removed.", "emails": emails}), 200
-
-
-@app.route('/trigger-check', methods=['GET', 'POST'])
-def trigger_check():
-    run_pipeline()
-    return jsonify({"message": "Pipeline check completed."}), 200
+    return jsonify({"emails": emails})
 
 
-if __name__ == '__main__':
-    run_pipeline()
-    app.run(host='0.0.0.0', port=5000)
+@app.route("/trigger-check", methods=["GET", "POST"])
+def triggerCheck():
+    runPipeline()
+    return jsonify({"message": "done"})
+
+
+if __name__ == "__main__":
+    runPipeline()
+    app.run(host="0.0.0.0", port=5000)
