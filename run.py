@@ -23,8 +23,8 @@ authUrl = "https://ion.tjhsst.edu/oauth/authorize/"
 tokenUrl = "https://ion.tjhsst.edu/oauth/token/"
 profileUrl = "https://ion.tjhsst.edu/api/profile"
 
-subsFile = "subscribers.json"
-tokensFile = "tokens.json"
+subsFile = "subscribers"
+tokensFile = "tokens"
 
 tokenLifetime = 60 * 60 * 24 * 7
 
@@ -32,16 +32,25 @@ app = Flask(__name__)
 CORS(app)
 
 
-def loadJson(path):
-    if not os.path.exists(path):
+upstashUrl = os.getenv("UPSTASH_URL")
+upstashToken = os.getenv("UPSTASH_TOKEN")
+
+
+def upstashHeaders():
+    return {"Authorization": f"Bearer {upstashToken}"}
+
+
+def loadJson(key):
+    res = requests.get(f"{upstashUrl}/get/{key}", headers=upstashHeaders())
+    result = res.json().get("result")
+    if not result:
         return {}
-    with open(path) as f:
-        return json.load(f)
+    return json.loads(result)
 
 
-def saveJson(path, data):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
+def saveJson(key, data):
+    payload = json.dumps(data)
+    requests.post(f"{upstashUrl}/set/{key}", headers=upstashHeaders(), data=payload.encode())
 
 
 def usernameFromToken(token):
