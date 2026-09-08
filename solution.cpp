@@ -1,79 +1,75 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include <thread>
-#include <chrono>
+#include <sstream>
 
-using namespace std;
+// Basic lightweight helper to extract string values from a simple JSON structure
+std::string extractJsonValue(const std::string& json, const std::string& key) {
+    std::string searchKey = "\"" + key + "\":";
+    size_t startPos = json.find(searchKey);
+    if (startPos == std::string::npos) return "";
+
+    startPos += searchKey.length();
+    // Skip whitespace and opening quote
+    while (startPos < json.length() && (json[startPos] == ' ' || json[startPos] == '"')) {
+        startPos++;
+    }
+
+    size_t endPos = json.find("\"", startPos);
+    if (endPos == std::string::npos) return "";
+
+    return json.substr(startPos, endPos - startPos);
+}
 
 void process_data() {
-    ifstream fin("input.json");
-    if (!fin.is_open()) {
-        cout << "input.json not found, skipping iteration..." << endl;
+    std::ifstream inFile("input.json");
+    if (!inFile.is_open()) {
+        std::cerr << "Error opening input.json" << std::endl;
         return;
     }
 
-    // Read JSON file into string
-    string raw_input((istreambuf_iterator<char>(fin)), istreambuf_iterator<char>());
-    fin.close();
+    std::stringstream buffer;
+    buffer << inFile.rdbuf();
+    std::string jsonStr = buffer.str();
+    inFile.close();
 
-    // Read state from last_seen.txt
-    string last_seen = "";
-    ifstream history_in("last_seen.txt");
-    if (history_in.is_open()) {
-        getline(history_in, last_seen);
-        history_in.close();
+    std::string id = extractJsonValue(jsonStr, "id");
+    std::string title = extractJsonValue(jsonStr, "title");
+    std::string author = extractJsonValue(jsonStr, "author");
+    std::string body = extractJsonValue(jsonStr, "body");
+
+    // Read the last processed ID
+    std::string lastId = "";
+    std::ifstream lastIdFile("last_id.txt");
+    if (lastIdFile.is_open()) {
+        std::getline(lastIdFile, lastId);
+        lastIdFile.close();
     }
 
-    // Helper lambda to extract JSON fields
-    auto get_field = [&](const string& key) {
-        size_t pos = raw_input.find("\"" + key + "\"");
-        if (pos == string::npos) return string("");
-        pos = raw_input.find(":", pos);
-        if (pos == string::npos) return string("");
-        size_t start = raw_input.find_first_of("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", pos);
-        size_t end = raw_input.find_first_of(",}\"\n\r", start);
-        if (start == string::npos || end == string::npos) return string("");
-        return raw_input.substr(start, end - start);
-    };
-
-    string current_id = get_field("id");
-    string title = get_field("title");
-    string body = get_field("body");
-    string author = get_field("author");
-
-    // Fallback test values if API returns empty JSON
-    if (current_id.empty()) {
-        current_id = "test_1001";
-        title = "Test"; 
-        body = "Hello World!";
-        author = "William Nguyen";
+    std::ofstream outFile("output.txt");
+    if (!outFile.is_open()) {
+        std::cerr << "Error opening output.txt" << std::endl;
+        return;
     }
 
-    // Combine values into a pipe-delimited string: TITLE|AUTHOR|BODY
-    string formatted_text = title + "|" + author + "|" + body;
-
-    // Output logic
-    ofstream fout("output.txt");
-    if (!current_id.empty() && current_id != last_seen) {
-        fout << formatted_text;
-
-        ofstream history_out("last_seen.txt");
-        history_out << current_id;
-        history_out.close();
+    // Check if this announcement is new
+    if (!id.empty() && id != lastId) {
+        outFile << title << "|" << author << "|" << body;
+        
+        // Update last processed ID
+        std::ofstream updateLastId("last_id.txt");
+        if (updateLastId.is_open()) {
+            updateLastId << id;
+            updateLastId.close();
+        }
     } else {
-        fout << "NONE";
+        outFile << "NONE";
     }
-    fout.close();
+
+    outFile.close();
 }
 
 int main() {
-    while (true) {
-        process_data();
-        
-        // Sleep for 60 seconds between checks
-        this_thread::sleep_for(chrono::seconds(60));
-    }
-
+    process_data();
     return 0;
 }
