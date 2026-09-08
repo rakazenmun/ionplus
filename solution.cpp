@@ -1,12 +1,17 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <thread>
+#include <chrono>
 
 using namespace std;
 
-int main() {
+void process_data() {
     ifstream fin("input.json");
-    if (!fin.is_open()) return 1;
+    if (!fin.is_open()) {
+        cout << "input.json not found, skipping iteration..." << endl;
+        return;
+    }
 
     // Read JSON file into string
     string raw_input((istreambuf_iterator<char>(fin)), istreambuf_iterator<char>());
@@ -40,9 +45,9 @@ int main() {
     // Fallback test values if API returns empty JSON
     if (current_id.empty()) {
         current_id = "test_1001";
-        title = "Important School Update";
-        body = "Please review the upcoming schedule changes on the official portal.";
-        author = "Michael Mukai";
+        title = "Test"; 
+        body = "Hello World!";
+        author = "William Nguyen";
     }
 
     // Combine values into a pipe-delimited string: TITLE|AUTHOR|BODY
@@ -60,6 +65,15 @@ int main() {
         fout << "NONE";
     }
     fout.close();
+}
+
+int main() {
+    while (true) {
+        process_data();
+        
+        // Sleep for 60 seconds between checks
+        this_thread::sleep_for(chrono::seconds(60));
+    }
 
     return 0;
 }
