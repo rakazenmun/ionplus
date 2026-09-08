@@ -2,10 +2,9 @@
 
 subscribers.txt
 
-input.json
 output.txt
 last_seen.txt
 
 solution.exe
-solution.env 
-solution.exe 
+solution
+
