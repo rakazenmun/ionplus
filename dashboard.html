@@ -10,7 +10,10 @@
 
 <header class="topbar">
   <span class="brand">IonPlus</span>
-  <span class="signed-in" id="signedInText">...</span>
+  <span class="signed-in">
+    <span id="signedInText">...</span>
+    · <a href="#" id="logoutLink" class="logout-link">Sign out</a>
+  </span>
 </header>
 
 <main class="dashboard-main">
@@ -107,6 +110,12 @@ async function removeEmail(email) {
   const data = await res.json();
   if (res.ok) renderEmails(data.emails);
 }
+
+document.getElementById("logoutLink").addEventListener("click", (e) => {
+  e.preventDefault();
+  localStorage.removeItem("ionplusToken");
+  location.href = "index.html";
+});
 
 loadMe();
 </script>
