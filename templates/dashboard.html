@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IonPlus Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="dashboard-body">
+
+<header class="topbar">
+    <span class="brand">IonPlus</span>
+    <span class="signed-in">
+        Signed in as <strong>{{ username }}</strong>
+        · <a href="/logout" class="logout-link">Sign out</a>
+    </span>
+</header>
+
+<main class="dashboard-main">
+    <div class="card">
+        <h1>Announcement Emails</h1>
+        <p>Add an email to get notified when new Ion announcements are posted.</p>
+
+        <form id="subscribeForm">
+            <input type="email" id="email" name="email" placeholder="Enter your email" required>
+            <button type="submit" class="ion-btn">Add Email</button>
+        </form>
+        <div id="message"></div>
+
+        <h2 class="subscribed-heading">Your subscribed emails</h2>
+        <ul id="emailList" class="email-list">
+            {% for email in emails %}
+            <li data-email="{{ email }}">
+                <span>{{ email }}</span>
+                <button class="remove-btn" onclick="removeEmail('{{ email }}')">Remove</button>
+            </li>
+            {% else %}
+            <li class="empty-state">No emails added yet.</li>
+            {% endfor %}
+        </ul>
+    </div>
+</main>
+
+<script>
+    const form = document.getElementById('subscribeForm');
+    const messageDiv = document.getElementById('message');
+    const emailList = document.getElementById('emailList');
+
+    function renderEmails(emails) {
+        emailList.innerHTML = '';
+        if (emails.length === 0) {
+            emailList.innerHTML = '<li class="empty-state">No emails added yet.</li>';
+            return;
+        }
+        emails.forEach(email => {
+            const li = document.createElement('li');
+            li.dataset.email = email;
+            li.innerHTML = `<span>${email}</span><button class="remove-btn" onclick="removeEmail('${email}')">Remove</button>`;
+            emailList.appendChild(li);
+        });
+    }
+
+    form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const email = document.getElementById('email').value;
+
+        const response = await fetch('/api/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ email })
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            messageDiv.className = 'success';
+            messageDiv.textContent = data.message;
+            document.getElementById('email').value = '';
+            renderEmails(data.emails);
+        } else {
+            messageDiv.className = 'error';
+            messageDiv.textContent = data.error || 'Something went wrong.';
+        }
+    });
+
+    async function removeEmail(email) {
+        const response = await fetch('/api/unsubscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ email })
+        });
+        const data = await response.json();
+        if (response.ok) {
+            renderEmails(data.emails);
+        }
+    }
+</script>
+
+</body>
+</html>
